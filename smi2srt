@@ -6,7 +6,8 @@ import os
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-r", "--remove_original",
+parser.add_argument("-r", "--replace_file", help="replace srt file when srt file already exists", default=False, action="store_true")
+parser.add_argument("-d", "--delete_original",
                     help="remove original smi file when converting succeed", default=False, action="store_true")
 parser.add_argument("-i", "--ignore", help="ignore decoding error",
                     default=False, action="store_true")
@@ -16,14 +17,97 @@ parser.add_argument(
 args = parser.parse_args()
 
 PATH = args.dir
-REMOVE_OPTION = args.remove_original
+REPLACE_OPTION = args.replace_file
+REMOVE_OPTION = args.delete_original
 DECODE_ERRORS = 'ignore' if args.ignore else 'strict'
+
+# SUFFIX_DICT = {
+#     'ek_R' : 'kor',
+#     'en' : 'kor', 
+#     'en_US' : 'kor',
+#     'ez_NE_KR' : 'kor',
+#     'ko_KR' : 'kor',
+#     'ko_REANSC' : 'kor',
+#     'kr_C' : 'kor',
+#     'kr_CC' : 'kor',
+#     'kr_RC' : 'kor',
+#     'kr_RRR' : 'kor',
+#     'kr_모C' : 'kor',
+#     'su_BTTL' : 'kor',
+#     'un_KNOWN' : 'kor',
+# }
+
+def parse_style(smi):
+    """
+    SMI 파일의 <HEAD><STYLE> 안에 있는 P 태그 및 클래스 스타일 정보를 파싱합니다.
+    반환: dict
+      - 'P': 기본 P 스타일 (margin-left, font-size, color 등)
+      - 'classes': .ClassName 스타일 (예: .KRCC)
+      - 'ids': #ID 스타일 (예: #STDPrn, #LargePrn)
+    """
+    result = {'P': {}, 'classes': {}, 'ids': {}}
+
+    # <STYLE ...> ... </STYLE> 구간 추출 (대소문자 무시)
+    style_match = re.search(r'<style[^>]*>(.*?)</style>', smi, re.I | re.DOTALL)
+    if not style_match:
+        return result
+
+    style_block = style_match.group(1)
+    # SMI는 CSS가 주석 안에 있음. 주석을 지우면 내용까지 사라지므로, 주석 안쪽만 추출
+    comment_match = re.search(r'<!--(.*?)-->', style_block, re.DOTALL)
+    if comment_match:
+        style_block = comment_match.group(1)
+
+    def parse_css_properties(inner):
+        """중괄호 안 내용을 '속성:값' 쌍으로 파싱"""
+        props = {}
+        # 세미콜론으로 구분, 각 항목에서 key : value 추출
+        for part in re.split(r'\s*;\s*', inner):
+            part = part.strip()
+            if ':' in part:
+                key, _, value = part.partition(':')
+                props[key.strip()] = value.strip()
+        return props
+
+    # P { ... }  (기본 단락 스타일)
+    p_match = re.search(r'P\s*\{([^}]*)\}', style_block, re.I | re.DOTALL)
+    if p_match:
+        result['P'] = parse_css_properties(p_match.group(1))
+
+    # .ClassName { ... }
+    for m in re.finditer(r'\.(\w+)\s*\{([^}]*)\}', style_block, re.DOTALL):
+        result['classes'][m.group(1).lower()] = parse_css_properties(m.group(2))
+
+    # #ID { ... }
+    for m in re.finditer(r'#(\w+)\s*\{([^}]*)\}', style_block, re.DOTALL):
+        result['ids'][m.group(1)] = parse_css_properties(m.group(2))
+
+    return result
+
+
+# def parse_p_tag_classes(smi, only_used_in_body=True):
+#     """
+#     P 태그에 등록된 class 정보만 뽑아냅니다.
+#     - only_used_in_body=True: 본문에 <P Class=XXX>로 실제 쓰인 class만 반환
+#     - only_used_in_body=False: STYLE에 정의된 모든 .ClassName 정보 반환
+#     반환: dict 예) {'KRCC': {'Name': '한글', 'lang': 'ko-KR', 'SAMIType': 'CC'}}
+#     """
+#     full_style = parse_style(smi)
+#     classes = full_style['classes']
+
+#     if not only_used_in_body:
+#         return classes
+
+#     # 본문에서 <P Class=XXX> 로 쓰인 class 이름만 수집
+#     pattern = re.compile(r'<p\s+class=(\w+)>', flags=re.I)
+#     used = set(pattern.findall(smi))
+#     return {name: props for name, props in classes.items() if name in used}
 
 
 def parse(smi):
     def get_languages():
         pattern = re.compile(r'<p class=(\w+)>', flags=re.I)
-        langs = list(sorted(set(pattern.findall(smi))))
+        langs = list(sorted(set(x.lower() for x in pattern.findall(smi))))
         return langs
 
     def remove_tag(matchobj):
@@ -44,7 +128,7 @@ def parse(smi):
             content = content.replace('\n', '')
             content = re.sub('<br ?/?>', '\n', content, flags=re.I)
             content = re.sub('<[^>]+>', remove_tag, content)
-            parsed[lang] = content
+            parsed[lang.lower()] = content
         return parsed
 
     data = []
@@ -61,11 +145,11 @@ def parse(smi):
             datum['end'] = int(e.split('=')[1]) if e is not None else None
             datum['content'] = parse_p(c)
             data.append(datum)
-        return get_languages(), data
+        return get_languages(), data, parse_style(smi)
     except:
         print('Conversion ERROR: maybe this file is not supported.')
 
-    return get_languages(), data
+    return get_languages(), data, parse_style(smi)
 
 
 def convert(data, lang):  # written by ncianeo
@@ -106,28 +190,44 @@ def convert(data, lang):  # written by ncianeo
 print('media library path:', PATH)
 success = []
 fail = []
+passed = []
 print('finding and converting started...')
 for p, w, f in os.walk(PATH):
     for file_name in f:
         if file_name[-4:].lower() == '.smi':
-            print('processing %s' % os.path.join(p, file_name))
+            # print('processing %s' % os.path.join(p, file_name))
             try:
                 with open(os.path.join(p, file_name), 'rb') as smi_file:
                     smi_raw = smi_file.read()
                     encoding = cchardet.detect(smi_raw)
                 smi = smi_raw.decode(
                     encoding['encoding'], errors=DECODE_ERRORS)
-                langs, data = parse(smi)
-                for lang in langs:
-                    lang_code = lang.replace('CC', '')
-                    SUFFIX = '.'+(lang_code.lower() if len(
-                        lang_code) == 2 else lang_code[:2].lower() + '_' + lang_code[2:].upper())
-                    srt_file = codecs.open(os.path.join(p, os.path.splitext(
-                        file_name)[0]+SUFFIX+'.srt'), 'w', encoding='utf-8')
-                    srt_file.write(convert(data, lang))
-                success.append(file_name)
-                if REMOVE_OPTION:
-                    os.remove(os.path.join(p, file_name))
+                langs, data, style_info = parse(smi)
+                classes = style_info['classes']
+                # style_info: HEAD의 P 태그/클래스 스타일 정보 (저장·활용 가능)
+                # style_info['P'] = 기본 P 스타일, style_info['classes'] = .KRCC 등
+                if len(langs) > 1:
+                    print(file_name)
+                    print(langs)
+                    print(classes)
+                    exit()
+                # for lang in langs:
+                #     if lang != 'KRCC':
+                #     print(lang)
+                #     exit()
+                #     lang_code = lang.replace('CC', '')
+                    
+                #     SUFFIX = '.'+(lang_code.lower() if len(
+                #         lang_code) == 2 else lang_code[:2].lower() + '_' + lang_code[2:].upper())
+                #     srt_file_name = os.path.join(p, os.path.splitext(file_name)[0]+SUFFIX+'.srt')
+                #     if REPLACE_OPTION is False and os.path.exists(srt_file_name):
+                #         passed.append(file_name)
+                #         continue
+                #     srt_file = codecs.open(srt_file_name, 'w', encoding='utf-8')
+                #     srt_file.write(convert(data, lang))
+                # success.append(file_name)
+                # if REMOVE_OPTION:
+                #     os.remove(os.path.join(p, file_name))
             except:
                 fail.append(file_name)
 
