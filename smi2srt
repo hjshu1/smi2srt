@@ -6,103 +6,24 @@ import os
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-r", "--replace_file", help="replace srt file when srt file already exists", default=False, action="store_true")
-parser.add_argument("-d", "--delete_original",
-                    help="remove original smi file when converting succeed", default=False, action="store_true")
-parser.add_argument("-i", "--ignore", help="ignore decoding error",
-                    default=False, action="store_true")
-parser.add_argument(
-    "dir", help="target directory. ex) ./smi2srt <OPTIONS> ./Movies", default="./")
+parser.add_argument("-r", "--replace-file", help="replace srt file when srt file is already exists (Default: Skip)", default=False, action="store_true")
+parser.add_argument("-d", "--delete-original", help="remove original smi file when converting succeed ", default=False, action="store_true")
+parser.add_argument("-i", "--ignore", help="ignore decoding error", default=False, action="store_true")
+parser.add_argument("-m", "--multi-subs", help="convert multiple subtitles ( Default: Skip)", default=False, action="store_true")
+parser.add_argument("-l", "--language", metavar="LANG", help="default language code ( Default: kor)\n .kor.srt", default="kor")
+parser.add_argument("-t", "--test", help="test mode, check smi file only", default=False, action="store_true")
+parser.add_argument("dir", help="target directory. ex) ./smi2srt <OPTIONS> ./Movies", default="./")
 
 args = parser.parse_args()
 
 PATH = args.dir
 REPLACE_OPTION = args.replace_file
 REMOVE_OPTION = args.delete_original
+MULTI_SUBS_OPTION = args.multi_subs
+LANG_OPTION = args.default_lang
+TEST_OPTION = args.test
+
 DECODE_ERRORS = 'ignore' if args.ignore else 'strict'
-
-# SUFFIX_DICT = {
-#     'ek_R' : 'kor',
-#     'en' : 'kor', 
-#     'en_US' : 'kor',
-#     'ez_NE_KR' : 'kor',
-#     'ko_KR' : 'kor',
-#     'ko_REANSC' : 'kor',
-#     'kr_C' : 'kor',
-#     'kr_CC' : 'kor',
-#     'kr_RC' : 'kor',
-#     'kr_RRR' : 'kor',
-#     'kr_모C' : 'kor',
-#     'su_BTTL' : 'kor',
-#     'un_KNOWN' : 'kor',
-# }
-
-def parse_style(smi):
-    """
-    SMI 파일의 <HEAD><STYLE> 안에 있는 P 태그 및 클래스 스타일 정보를 파싱합니다.
-    반환: dict
-      - 'P': 기본 P 스타일 (margin-left, font-size, color 등)
-      - 'classes': .ClassName 스타일 (예: .KRCC)
-      - 'ids': #ID 스타일 (예: #STDPrn, #LargePrn)
-    """
-    result = {'P': {}, 'classes': {}, 'ids': {}}
-
-    # <STYLE ...> ... </STYLE> 구간 추출 (대소문자 무시)
-    style_match = re.search(r'<style[^>]*>(.*?)</style>', smi, re.I | re.DOTALL)
-    if not style_match:
-        return result
-
-    style_block = style_match.group(1)
-    # SMI는 CSS가 주석 안에 있음. 주석을 지우면 내용까지 사라지므로, 주석 안쪽만 추출
-    comment_match = re.search(r'<!--(.*?)-->', style_block, re.DOTALL)
-    if comment_match:
-        style_block = comment_match.group(1)
-
-    def parse_css_properties(inner):
-        """중괄호 안 내용을 '속성:값' 쌍으로 파싱"""
-        props = {}
-        # 세미콜론으로 구분, 각 항목에서 key : value 추출
-        for part in re.split(r'\s*;\s*', inner):
-            part = part.strip()
-            if ':' in part:
-                key, _, value = part.partition(':')
-                props[key.strip()] = value.strip()
-        return props
-
-    # P { ... }  (기본 단락 스타일)
-    p_match = re.search(r'P\s*\{([^}]*)\}', style_block, re.I | re.DOTALL)
-    if p_match:
-        result['P'] = parse_css_properties(p_match.group(1))
-
-    # .ClassName { ... }
-    for m in re.finditer(r'\.(\w+)\s*\{([^}]*)\}', style_block, re.DOTALL):
-        result['classes'][m.group(1).lower()] = parse_css_properties(m.group(2))
-
-    # #ID { ... }
-    for m in re.finditer(r'#(\w+)\s*\{([^}]*)\}', style_block, re.DOTALL):
-        result['ids'][m.group(1)] = parse_css_properties(m.group(2))
-
-    return result
-
-
-# def parse_p_tag_classes(smi, only_used_in_body=True):
-#     """
-#     P 태그에 등록된 class 정보만 뽑아냅니다.
-#     - only_used_in_body=True: 본문에 <P Class=XXX>로 실제 쓰인 class만 반환
-#     - only_used_in_body=False: STYLE에 정의된 모든 .ClassName 정보 반환
-#     반환: dict 예) {'KRCC': {'Name': '한글', 'lang': 'ko-KR', 'SAMIType': 'CC'}}
-#     """
-#     full_style = parse_style(smi)
-#     classes = full_style['classes']
-
-#     if not only_used_in_body:
-#         return classes
-
-#     # 본문에서 <P Class=XXX> 로 쓰인 class 이름만 수집
-#     pattern = re.compile(r'<p\s+class=(\w+)>', flags=re.I)
-#     used = set(pattern.findall(smi))
-#     return {name: props for name, props in classes.items() if name in used}
-
 
 def parse(smi):
     def get_languages():
@@ -145,11 +66,11 @@ def parse(smi):
             datum['end'] = int(e.split('=')[1]) if e is not None else None
             datum['content'] = parse_p(c)
             data.append(datum)
-        return get_languages(), data, parse_style(smi)
+        return get_languages(), data
     except:
         print('Conversion ERROR: maybe this file is not supported.')
 
-    return get_languages(), data, parse_style(smi)
+    return get_languages(), data
 
 
 def convert(data, lang):  # written by ncianeo
@@ -186,55 +107,71 @@ def convert(data, lang):  # written by ncianeo
             continue
     return srt
 
+def check_replace(srt_full_path):
+    if REPLACE_OPTION is False and os.path.exists(srt_full_path):
+        return True
+    return False
+
+def make_srt_file(srt_full_path, data, lang):
+    with codecs.open(srt_full_path, 'w', encoding='utf-8') as srt_file:
+        srt_file.write(convert(data, lang))
 
 print('media library path:', PATH)
 success = []
 fail = []
-passed = []
+skipped = []
+multiple = []
 print('finding and converting started...')
 for p, w, f in os.walk(PATH):
     for file_name in f:
         if file_name[-4:].lower() == '.smi':
-            # print('processing %s' % os.path.join(p, file_name))
+            lang_code = LANG_OPTION
+            file_head = os.path.splitext(file_name)[0]
+            smi_full_path = os.path.join(p, file_name)
+            srt_full_path = os.path.join(p, file_head + '.' + lang_code + '.srt')
+
+            if check_replace(srt_full_path):
+                skipped.append(file_name)
+                continue
+
             try:
-                with open(os.path.join(p, file_name), 'rb') as smi_file:
+                with open(smi_full_path, 'rb') as smi_file:
                     smi_raw = smi_file.read()
                     encoding = cchardet.detect(smi_raw)
-                smi = smi_raw.decode(
-                    encoding['encoding'], errors=DECODE_ERRORS)
-                langs, data, style_info = parse(smi)
-                classes = style_info['classes']
-                # style_info: HEAD의 P 태그/클래스 스타일 정보 (저장·활용 가능)
-                # style_info['P'] = 기본 P 스타일, style_info['classes'] = .KRCC 등
-                if len(langs) > 1:
+                smi = smi_raw.decode(encoding['encoding'], errors=DECODE_ERRORS)
+                langs, data = parse(smi)
+
+                if MULTI_SUBS_OPTION is False and len(langs) > 1:
+                    multiple.append(smi_full_path)
                     print(file_name)
                     print(langs)
-                    print(classes)
-                    exit()
-                # for lang in langs:
-                #     if lang != 'KRCC':
-                #     print(lang)
-                #     exit()
-                #     lang_code = lang.replace('CC', '')
-                    
-                #     SUFFIX = '.'+(lang_code.lower() if len(
-                #         lang_code) == 2 else lang_code[:2].lower() + '_' + lang_code[2:].upper())
-                #     srt_file_name = os.path.join(p, os.path.splitext(file_name)[0]+SUFFIX+'.srt')
-                #     if REPLACE_OPTION is False and os.path.exists(srt_file_name):
-                #         passed.append(file_name)
-                #         continue
-                #     srt_file = codecs.open(srt_file_name, 'w', encoding='utf-8')
-                #     srt_file.write(convert(data, lang))
-                # success.append(file_name)
-                # if REMOVE_OPTION:
-                #     os.remove(os.path.join(p, file_name))
-            except:
-                fail.append(file_name)
+                    continue
+                for lang in langs:
+                    if MULTI_SUBS_OPTION and len(langs) > 1:
+                        if 'kr' in lang_code or 'ko' in lang_code:
+                            lang_code = '.kor'
+                        if 'en' in lang_code or 'us' in lang_code:
+                            lang_code = '.eng'
 
-smi_list = list(set(success) | set(fail))
-print('\nfound .smi subtitles:')
-for smi in smi_list:
-    print(smi)
+                    srt_full_path = os.path.join(p, file_head + '.' + lang_code + '.srt')
+                    if check_replace(srt_full_path):
+                        skipped.append(file_name)
+                        continue
+
+                    if TEST_OPTION is False:
+                        make_srt_file(srt_full_path, data, lang)
+                    success.append(file_name)
+                if REMOVE_OPTION:
+                    os.remove(smi_full_path)
+            except Exception as e:
+                print(smi_full_path)
+                print(e)
+                fail.append(smi_full_path)
+
+# smi_list = list(set(success) | set(fail))
+# print('\nfound .smi subtitles:')
+# for smi in smi_list:
+#     print(smi)
 
 print('\nworked .smi subtitles:')
 for smi in success:
@@ -243,6 +180,14 @@ for smi in success:
 print('\nfailed .smi subtitles:')
 for smi in fail:
     print(smi)
+
+print('\nmultiple .smi subtitles:')
+for smi in multiple:
+    print(smi)
+
+# print('\nskipped .smi subtitles:')
+# for smi in skipped:
+#     print(smi)
 
 if REMOVE_OPTION:
     print('\nworked smi files are removed due to removal option')
