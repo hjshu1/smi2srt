@@ -6,10 +6,10 @@ import os
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-r", "--replace-file", help="replace srt file when srt file is already exists (Default: Skip)", default=False, action="store_true")
-parser.add_argument("-d", "--delete-original", help="remove original smi file when converting succeed ", default=False, action="store_true")
+parser.add_argument("-r", "--replace_file", help="replace srt file when srt file is already exists (Default: Skip)", default=False, action="store_true")
+parser.add_argument("-d", "--delete_original", help="remove original smi file when converting succeed ", default=False, action="store_true")
 parser.add_argument("-i", "--ignore", help="ignore decoding error", default=False, action="store_true")
-parser.add_argument("-m", "--multi-subs", help="convert multiple subtitles ( Default: Skip)", default=False, action="store_true")
+parser.add_argument("-m", "--multi_subs", help="convert multiple subtitles ( Default: Skip)", default=False, action="store_true")
 parser.add_argument("-l", "--language", metavar="LANG", help="default language code ( Default: kor)\n .kor.srt", default="kor")
 parser.add_argument("-t", "--test", help="test mode, check smi file only", default=False, action="store_true")
 parser.add_argument("dir", help="target directory. ex) ./smi2srt <OPTIONS> ./Movies", default="./")
@@ -20,7 +20,7 @@ PATH = args.dir
 REPLACE_OPTION = args.replace_file
 REMOVE_OPTION = args.delete_original
 MULTI_SUBS_OPTION = args.multi_subs
-LANG_OPTION = args.default_lang
+LANG_OPTION = args.language
 TEST_OPTION = args.test
 
 DECODE_ERRORS = 'ignore' if args.ignore else 'strict'
